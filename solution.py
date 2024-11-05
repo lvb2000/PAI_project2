@@ -153,6 +153,7 @@ class SWAGInference(object):
         self.squared_mean = self._create_weight_copy()
         # model count
         self.n = 0
+        self.n_calibration = 0
 
         # Full SWAG
         # TODO(2): create attributes for SWAG-full
@@ -245,7 +246,7 @@ class SWAGInference(object):
 
                 # TODO(1): Implement periodic SWAG updates using the attributes defined in __init__
                 if epoch % self.swag_update_interval == 0:
-                    self.n = epoch/self.swag_update_interval
+                    self.n += 1
                     self.update_swag_statistics()
 
     def apply_calibration(self, validation_data: torch.utils.data.Dataset) -> None:
@@ -270,6 +271,17 @@ class SWAGInference(object):
         assert val_labels.size() == (140,)
         assert val_snow_labels.size() == (140,)
         assert val_cloud_labels.size() == (140,)
+        # Build and run the actual solution
+        validation_loader = torch.utils.data.DataLoader(
+            validation_data,
+            batch_size=16,
+            shuffle=True,
+            num_workers=0,
+        )
+        self.swag_training_epochs = 10
+        self.fit_swag_model(validation_loader)
+
+
 
     def predict_probabilities_swag(self, loader: torch.utils.data.DataLoader) -> torch.Tensor:
         """
