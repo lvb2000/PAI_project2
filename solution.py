@@ -343,9 +343,9 @@ class SWAGInference(object):
             # Modify weight value in-place; directly changing self.network
             param.data = sampled_weight
 
-            # TODO(1): Don't forget to update batch normalization statistics using self._update_batchnorm_statistics()
-            #  in the appropriate place!
-            self._update_batchnorm_statistics()
+        # TODO(1): Don't forget to update batch normalization statistics using self._update_batchnorm_statistics()
+        #  in the appropriate place!
+        self._update_batchnorm_statistics()
 
     def predict_labels(self, predicted_probabilities: torch.Tensor) -> torch.Tensor:
         """
