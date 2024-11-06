@@ -162,7 +162,7 @@ class SWAGInference(object):
         # Calibration, prediction, and other attributes
         # TODO(2): create additional attributes, e.g., for calibration
         self._calibration_threshold = None  # this is an example, feel free to be creative
-        self._temperature = None  # temperature coefficient for temperature scaling
+        self.temperature = torch.nn.Parameter(torch.ones(1) * 1.5)
 
     def update_swag_statistics(self) -> None:
         """
@@ -250,55 +250,47 @@ class SWAGInference(object):
                     self.n += 1
                     self.update_swag_statistics()
 
+    def temperature_scale(self, logits):
+        """
+        Perform temperature scaling on logits
+        """
+        # Expand temperature to match the size of logits
+        temperature = self.temperature.unsqueeze(1).expand(logits.size(0), logits.size(1))
+        return logits / temperature
+
     def optimize_temperature(self, val_loader: torch.utils.data.DataLoader) -> None:
         """
         Optimize the negativ Log Likelihood (NLL) loss with respect to the temperature parameter over the validation dataset.
+        Implementation copied from https://github.com/gpleiss/temperature_scaling/blob/master/temperature_scaling.py
         """
         # Create a temperature parameter that is optimized
-        temperature = torch.nn.Parameter(torch.ones(1) * 1.0, requires_grad=True)
-        optimizer = torch.optim.Adam([temperature], lr=0.01)
-        # Cross entropy is the negative log likelihood loss
-        loss_fn_valid = torch.nn.CrossEntropyLoss(reduction="mean")
-        loss_fn_invalid = torch.nn.NLLLoss(reduction="mean")
+        optimizer = torch.optim.LBFGS([self.temperature], lr=0.01, max_iter=50)
+        nll_criterion = torch.nn.CrossEntropyLoss()
 
-        # Perform optimization
-        self.network.eval()
-        for _ in tqdm.trange(10, desc="Optimizing temperature"):
+        # First: collect all the logits and labels for the validation set
+        logits_list = []
+        labels_list = []
+        with torch.no_grad():
             for batch_images, batch_snow_labels, batch_cloud_labels, batch_labels in val_loader:
-                with torch.no_grad():
-                    logits = self.network(batch_images)
+                logits = self.network(batch_images)
+                logits_list.append(logits)
+                labels_list.append(batch_labels)
+            logits = torch.cat(logits_list)
+            labels = torch.cat(labels_list)
+        # Remove logits and labels where label is -1
+        mask = labels != -1
+        logits = logits[mask]
+        labels = labels[mask]
+        # Optimize Temperature
+        def eval():
+            optimizer.zero_grad()
+            loss = nll_criterion(self.temperature_scale(logits), labels)
+            loss.backward()
+            return loss
 
-                # Apply temperature scaling
-                scaled_logits = logits / temperature
+        optimizer.step(eval)
 
-                # Separate valid and invalid samples
-                valid_mask = batch_labels != -1
-                invalid_mask = batch_labels == -1
-
-                if valid_mask.any():
-                    valid_logits = scaled_logits[valid_mask]
-                    valid_labels = batch_labels[valid_mask]
-                    ce_loss = loss_fn_valid(valid_logits, valid_labels)
-                else:
-                    ce_loss = torch.tensor(0.0)
-
-                if invalid_mask.any():
-                    invalid_logits = scaled_logits[invalid_mask]
-                    dummy_target = torch.zeros(invalid_logits.size(0), dtype=torch.long)
-                    entropy_loss = loss_fn_invalid(torch.softmax(invalid_logits, dim=1), dummy_target)
-                else:
-                    entropy_loss = torch.tensor(0.0)
-
-                # Total loss
-                loss = ce_loss + entropy_loss
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-        # Store the optimized temperature
-        self._temperature = temperature.item()
-        print(f"Optimized temperature: {self._temperature}")
+        print('Optimal temperature: %.3f' % self.temperature.item())
 
 
     def apply_calibration(self, validation_data: torch.utils.data.Dataset) -> None:
@@ -332,10 +324,6 @@ class SWAGInference(object):
         )
         self.optimize_temperature(validation_loader)
 
-
-
-
-
     def predict_probabilities_swag(self, loader: torch.utils.data.DataLoader) -> torch.Tensor:
         """
         Perform Bayesian model averaging using your SWAG statistics and predict
@@ -362,7 +350,7 @@ class SWAGInference(object):
             for (batch_images,) in loader:
                 # concat predictions over all batches
                 logits = self.network(batch_images)
-                probabilities = torch.softmax(logits/self._temperature, dim=1)
+                probabilities = torch.softmax(self.temperature_scale(logits), dim=1)
                 sample_predictions.append(probabilities)
             model_predictions.append(torch.cat(sample_predictions,0))
 
@@ -652,7 +640,7 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         # TODO(2): Implement a custom schedule if desired
         return previous_lr
 
-    # TODO(2): Add and store additional arguments if you decide to implement a custom scheduler
+        # TODO(2): Add and store additional arguments if you decide to implement a custom scheduler
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
