@@ -108,7 +108,7 @@ class SWAGInference(object):
         # TODO(2): change inference_mode to InferenceMode.SWAG_FULL
         inference_mode: InferenceType = InferenceType.SWAG_DIAGONAL,
         # TODO(2): optionally add/tweak hyperparameters
-        swag_training_epochs: int = 30,
+        swag_training_epochs: int = 60,
         swag_lr: float = 0.045,
         swag_update_interval: int = 1,
         max_rank_deviation_matrix: int = 15,
@@ -638,7 +638,23 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         This method should return a single float: the new learning rate.
         """
         # TODO(2): Implement a custom schedule if desired
-        return previous_lr
+        # weight decay linearily over epochs
+        if current_epoch < 30:
+            return previous_lr
+        if current_epoch < 45:
+            if not self.stage1:
+                self.stage1 = True
+                return previous_lr * 0.1
+            else:
+                return previous_lr
+        else:
+            if not self.stage2:
+                self.stage2 = True
+                return previous_lr * 0.1
+            else:
+                return previous_lr
+
+
 
         # TODO(2): Add and store additional arguments if you decide to implement a custom scheduler
     def __init__(
@@ -649,6 +665,9 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
     ):
         self.epochs = epochs
         self.steps_per_epoch = steps_per_epoch
+        # learning rate decline
+        self.stage1 = False
+        self.stage2 = False
         super().__init__(optimizer, last_epoch=-1, verbose=False)
 
     def get_lr(self):
