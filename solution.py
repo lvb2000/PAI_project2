@@ -112,7 +112,7 @@ class SWAGInference(object):
         swag_lr: float = 0.045,
         swag_update_interval: int = 1,
         max_rank_deviation_matrix: int = 15,
-        num_bma_samples: int = 30,
+        num_bma_samples: int = 60,
     ):
         """
         :param train_xs: Training images (for storage only)
