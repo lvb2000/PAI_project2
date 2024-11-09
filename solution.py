@@ -209,6 +209,8 @@ class SWAGInference(object):
             optimizer,
             epochs=self.swag_training_epochs,
             steps_per_epoch=len(loader),
+            min_lr = 0.042,
+            max_lr= 0.048,
         )
 
         # TODO(1): Perform initialization for SWAG fitting
@@ -639,20 +641,22 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         """
         # TODO(2): Implement a custom schedule if desired
         # weight decay linearily over epochs
-        if current_epoch < 30:
-            return previous_lr
-        if current_epoch < 45:
-            if not self.stage1:
-                self.stage1 = True
-                return previous_lr * 0.1
-            else:
-                return previous_lr
+        current_step = int(current_epoch * self.steps_per_epoch)
+
+        cycle = math.floor(1 + current_step / (2 * self.steps_per_epoch))
+        x = abs(current_step / self.steps_per_epoch - 2 * cycle + 1)
+
+        if self.mode == 'triangular':
+            lr = self.min_lr + (self.max_lr - self.min_lr) * max(0, (1 - x))
+        elif self.mode == 'triangular2':
+            lr = self.min_lr + (self.max_lr - self.min_lr) * max(0, (1 - x)) / (2 ** (cycle - 1))
+        elif self.mode == 'exp_range':
+            gamma = 0.999  # decay rate per cycle
+            lr = self.min_lr + (self.max_lr - self.min_lr) * max(0, (1 - x)) * (gamma ** current_step)
         else:
-            if not self.stage2:
-                self.stage2 = True
-                return previous_lr * 0.1
-            else:
-                return previous_lr
+            raise ValueError(f"Unsupported mode: {self.mode}")
+
+        return lr        
 
 
 
@@ -662,12 +666,16 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         optimizer: torch.optim.Optimizer,
         epochs: int,
         steps_per_epoch: int,
+        min_lr: float,
+        max_lr: float,
+        mode: str = 'triangular'
     ):
         self.epochs = epochs
         self.steps_per_epoch = steps_per_epoch
         # learning rate decline
-        self.stage1 = False
-        self.stage2 = False
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.mode = mode
         super().__init__(optimizer, last_epoch=-1, verbose=False)
 
     def get_lr(self):
