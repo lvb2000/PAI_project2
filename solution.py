@@ -106,13 +106,13 @@ class SWAGInference(object):
         model_dir: pathlib.Path,
         # TODO(1): change inference_mode to InferenceMode.SWAG_DIAGONAL
         # TODO(2): change inference_mode to InferenceMode.SWAG_FULL
-        inference_mode: InferenceType = InferenceType.SWAG_DIAGONAL,
+        inference_mode: InferenceType = InferenceType.SWAG_FULL,
         # TODO(2): optionally add/tweak hyperparameters
         swag_training_epochs: int = 30,
         swag_lr: float = 0.045,
         swag_update_interval: int = 1,
         max_rank_deviation_matrix: int = 15,
-        num_bma_samples: int = 60,
+        num_bma_samples: int = 30,
     ):
         """
         :param train_xs: Training images (for storage only)
@@ -158,6 +158,7 @@ class SWAGInference(object):
         # Full SWAG
         # TODO(2): create attributes for SWAG-full
         #  Hint: check collections.deque
+        self.deviation_dict = self._create_layer_dict()
 
         # Calibration, prediction, and other attributes
         # TODO(2): create additional attributes, e.g., for calibration
@@ -178,10 +179,10 @@ class SWAGInference(object):
             self.mean[name] = (self.n * self.mean[name] + param) / (self.n + 1)
             self.squared_mean[name] = (self.n * self.squared_mean[name] + param.pow(2)) / (self.n + 1)
 
-        # Full SWAG
-        if self.inference_mode == InferenceType.SWAG_FULL:
-            # TODO(2): update full SWAG attributes for weight `name` using `copied_params` and `param`
-            raise NotImplementedError("Update full SWAG statistics")
+            # Full SWAG
+            if self.inference_mode == InferenceType.SWAG_FULL:
+                # TODO(2): update full SWAG attributes for weight `name` using `copied_params` and `param`
+                self.deviation_dict[name].append((param - self.mean[name]).flatten())
 
     def fit_swag_model(self, loader: torch.utils.data.DataLoader) -> None:
         """
@@ -383,15 +384,22 @@ class SWAGInference(object):
             mean_weights = self.mean[name]
             std_weights = 0.5 * (self.squared_mean[name] - self.mean[name].pow(2))
             assert mean_weights.size() == param.size() and std_weights.size() == param.size()
-
             # Diagonal part
             sampled_weight = mean_weights + std_weights * z_diag
 
             # Full SWAG part
             if self.inference_mode == InferenceType.SWAG_FULL:
                 # TODO(2): Sample parameter values for full SWAG
-                raise NotImplementedError("Sample parameter for full SWAG")
-                sampled_weight += ...
+                deviation_matrix = torch.stack(list(self.deviation_dict[name]))
+                cov_sample = deviation_matrix.t().matmul(
+                    deviation_matrix.new_empty(
+                        (deviation_matrix.size(0),), requires_grad=False
+                    ).normal_()
+                )
+                # reshape to original shape
+                cov_sample /= (self.max_rank_deviation_matrix - 1) * 2
+                cov_sample = cov_sample.view_as(sampled_weight)
+                sampled_weight += cov_sample
 
             # Modify weight value in-place; directly changing self.network
             param.data = sampled_weight
@@ -430,6 +438,13 @@ class SWAGInference(object):
         """Create an all-zero copy of the network weights as a dictionary that maps name -> weight"""
         return {
             name: torch.zeros_like(param, requires_grad=False)
+            for name, param in self.network.named_parameters()
+        }
+
+    def _create_layer_dict(self) -> typing.Dict[str, collections.deque]:
+        """Create a dictionary that maps layer name -> deque of weights"""
+        return {
+            name: collections.deque(maxlen=self.max_rank_deviation_matrix)
             for name, param in self.network.named_parameters()
         }
 
