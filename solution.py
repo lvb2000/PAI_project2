@@ -159,6 +159,7 @@ class SWAGInference(object):
         # TODO(2): create attributes for SWAG-full
         #  Hint: check collections.deque
         self.deviation_dict = self._create_layer_dict()
+        self.scale = 0.5
 
         # Calibration, prediction, and other attributes
         # TODO(2): create additional attributes, e.g., for calibration
@@ -375,6 +376,7 @@ class SWAGInference(object):
         For simplicity, this method directly modifies self.network in-place.
         Hence, after calling this method, self.network corresponds to a new posterior sample.
         """
+        scale = self.scale ** 0.5
 
         # Instead of acting on a full vector of parameters, all operations can be done on per-layer parameters.
         for name, param in self.network.named_parameters():
@@ -382,10 +384,10 @@ class SWAGInference(object):
             z_diag = torch.randn(param.size())
             # TODO(1): Sample parameter values for SWAG-diagonal
             mean_weights = self.mean[name]
-            std_weights = 0.5 * (self.squared_mean[name] - self.mean[name].pow(2))
+            std_weights = (self.squared_mean[name] - self.mean[name].pow(2))
             assert mean_weights.size() == param.size() and std_weights.size() == param.size()
             # Diagonal part
-            sampled_weight = mean_weights + std_weights * z_diag
+            sampled_weight = mean_weights + scale * std_weights.sqrt() * z_diag
 
             # Full SWAG part
             if self.inference_mode == InferenceType.SWAG_FULL:
@@ -397,9 +399,9 @@ class SWAGInference(object):
                     ).normal_()
                 )
                 # reshape to original shape
-                cov_sample /= (self.max_rank_deviation_matrix - 1) * 2
+                cov_sample /= (self.max_rank_deviation_matrix - 1) ** 0.5
                 cov_sample = cov_sample.view_as(sampled_weight)
-                sampled_weight += cov_sample
+                sampled_weight += scale * cov_sample
 
             # Modify weight value in-place; directly changing self.network
             param.data = sampled_weight
