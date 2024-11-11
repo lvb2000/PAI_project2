@@ -166,4 +166,5 @@ cython_debug/
 **.bytes
 **.byte
 **.pt
+**.pdf
 euler-guide.md
